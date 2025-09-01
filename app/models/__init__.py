@@ -1,3 +1,4 @@
+from app.database import Base
 from .user import User
 from .room import Room
 from .object import Object, ObjectType
@@ -6,6 +7,7 @@ from .chat_log import ChatLog
 from .tools_log import ToolsLog, ActionType
 
 __all__ = [
+    "Base",
     "User",
     "Room", 
     "Object",

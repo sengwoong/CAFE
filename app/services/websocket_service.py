@@ -1,15 +1,17 @@
 import json
 import asyncio
 from typing import Dict, Set, Optional, Any
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Room, RoomUser, ChatLog, ToolsLog
 from app.schemas.websocket import (
     WebSocketMessage, WebSocketEvent, JoinRoomMessage, 
     LeaveRoomMessage, UpdatePositionMessage, SendMessageData,
-    UseToolData, UserPositionData, ChatMessageData, ToolUsageData, ErrorData
+    UseToolData, UserPositionData, ChatMessageData, ToolUsageData, ErrorData,
+    RtcJoinData, RtcLeaveData, RtcOfferData, RtcAnswerData, RtcIceCandidateData
 )
+from app.auth import verify_token
 from app.services.user_service import UserService
 from app.services.room_service import RoomService
 from app.services.chat_service import ChatService
@@ -70,6 +72,15 @@ class ConnectionManager:
                         # Remove broken connection
                         self.disconnect(connection)
 
+    def get_connection_by_user_in_room(self, room_id: int, target_user_id: int) -> Optional[WebSocket]:
+        if room_id not in self.active_connections:
+            return None
+        for connection in self.active_connections[room_id]:
+            user_id = self.connection_users.get(connection)
+            if user_id == target_user_id:
+                return connection
+        return None
+
 class WebSocketService:
     def __init__(self):
         self.manager = ConnectionManager()
@@ -114,13 +125,17 @@ class WebSocketService:
 
     async def _authenticate_user(self, token: str) -> Optional[User]:
         """Authenticate user from token"""
-        # This would use your existing auth logic
-        # For now, we'll use a simple approach
         try:
-            # You should implement proper JWT validation here
-            # This is a placeholder
-            return None
-        except:
+            credentials_exception = HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            token_data = verify_token(token, credentials_exception)
+            db = next(get_db())
+            user = db.query(User).filter(User.username == token_data.username).first()
+            return user
+        except Exception:
             return None
 
     async def _process_message(self, websocket: WebSocket, user: User, message: dict):
@@ -138,6 +153,16 @@ class WebSocketService:
             await self._handle_send_message(websocket, user, data)
         elif event == WebSocketEvent.USE_TOOL:
             await self._handle_use_tool(websocket, user, data)
+        elif event == WebSocketEvent.RTC_JOIN:
+            await self._handle_rtc_join(websocket, user, data)
+        elif event == WebSocketEvent.RTC_LEAVE:
+            await self._handle_rtc_leave(websocket, user, data)
+        elif event == WebSocketEvent.RTC_OFFER:
+            await self._handle_rtc_offer(websocket, user, data)
+        elif event == WebSocketEvent.RTC_ANSWER:
+            await self._handle_rtc_answer(websocket, user, data)
+        elif event == WebSocketEvent.RTC_ICE_CANDIDATE:
+            await self._handle_rtc_ice_candidate(websocket, user, data)
         else:
             error_message = WebSocketMessage(
                 event=WebSocketEvent.ERROR,
@@ -321,5 +346,97 @@ class WebSocketService:
             error_message = WebSocketMessage(
                 event=WebSocketEvent.ERROR,
                 data=ErrorData(error="Failed to use tool", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_rtc_join(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            join_data = RtcJoinData(**data)
+            info = {
+                "user_id": user.id,
+                "username": user.username,
+                "avatar_url": user.avatar_url,
+            }
+            message = WebSocketMessage(
+                event=WebSocketEvent.RTC_JOIN,
+                data=info
+            )
+            await self.manager.broadcast_to_room(message.json(), join_data.room_id, exclude_websocket=websocket)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to rtc join", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_rtc_leave(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            leave_data = RtcLeaveData(**data)
+            info = {
+                "user_id": user.id,
+            }
+            message = WebSocketMessage(
+                event=WebSocketEvent.RTC_LEAVE,
+                data=info
+            )
+            await self.manager.broadcast_to_room(message.json(), leave_data.room_id, exclude_websocket=websocket)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to rtc leave", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_rtc_offer(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            offer = RtcOfferData(**data)
+            target_ws = self.manager.get_connection_by_user_in_room(offer.room_id, offer.to_user_id)
+            payload = {
+                "from_user_id": user.id,
+                "sdp": offer.sdp,
+            }
+            message = WebSocketMessage(event=WebSocketEvent.RTC_OFFER, data=payload)
+            if target_ws:
+                await self.manager.send_personal_message(message.json(), target_ws)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to forward rtc offer", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_rtc_answer(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            answer = RtcAnswerData(**data)
+            target_ws = self.manager.get_connection_by_user_in_room(answer.room_id, answer.to_user_id)
+            payload = {
+                "from_user_id": user.id,
+                "sdp": answer.sdp,
+            }
+            message = WebSocketMessage(event=WebSocketEvent.RTC_ANSWER, data=payload)
+            if target_ws:
+                await self.manager.send_personal_message(message.json(), target_ws)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to forward rtc answer", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_rtc_ice_candidate(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            ice = RtcIceCandidateData(**data)
+            target_ws = self.manager.get_connection_by_user_in_room(ice.room_id, ice.to_user_id)
+            payload = {
+                "from_user_id": user.id,
+                "candidate": ice.candidate,
+            }
+            message = WebSocketMessage(event=WebSocketEvent.RTC_ICE_CANDIDATE, data=payload)
+            if target_ws:
+                await self.manager.send_personal_message(message.json(), target_ws)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to forward rtc ice candidate", details=str(e)).dict()
             )
             await self.manager.send_personal_message(error_message.json(), websocket)

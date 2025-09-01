@@ -10,6 +10,12 @@ class WebSocketEvent(BaseModel):
     UPDATE_POSITION = "update_position"
     SEND_MESSAGE = "send_message"
     USE_TOOL = "use_tool"
+    # WebRTC signaling
+    RTC_JOIN = "rtc_join"
+    RTC_LEAVE = "rtc_leave"
+    RTC_OFFER = "rtc_offer"
+    RTC_ANSWER = "rtc_answer"
+    RTC_ICE_CANDIDATE = "rtc_ice_candidate"
     USER_JOINED = "user_joined"
     USER_LEFT = "user_left"
     POSITION_UPDATED = "position_updated"
@@ -49,6 +55,32 @@ class UseToolData(BaseModel):
     room_id: int
     target_object_id: int
     action: ActionType
+
+class RtcJoinData(BaseModel):
+    """RTC join data"""
+    room_id: int
+
+class RtcLeaveData(BaseModel):
+    """RTC leave data"""
+    room_id: int
+
+class RtcOfferData(BaseModel):
+    """RTC offer data"""
+    room_id: int
+    to_user_id: int
+    sdp: str
+
+class RtcAnswerData(BaseModel):
+    """RTC answer data"""
+    room_id: int
+    to_user_id: int
+    sdp: str
+
+class RtcIceCandidateData(BaseModel):
+    """RTC ICE candidate data"""
+    room_id: int
+    to_user_id: int
+    candidate: Dict[str, Any]
 
 class UserPositionData(BaseModel):
     """User position data"""
