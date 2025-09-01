@@ -5,6 +5,7 @@ from .object import Object, ObjectType
 from .room_user import RoomUser
 from .chat_log import ChatLog
 from .tools_log import ToolsLog, ActionType
+from .inventory import InventoryItem
 
 __all__ = [
     "Base",
@@ -15,5 +16,6 @@ __all__ = [
     "RoomUser",
     "ChatLog",
     "ToolsLog",
-    "ActionType"
+    "ActionType",
+    "InventoryItem"
 ]

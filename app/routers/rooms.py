@@ -27,7 +27,7 @@ room_service = RoomService()
         "id": 1,
         "name": "커피숍",
         "owner_id": 1,
-        "is_private": false,
+        "is_private": False,
         "created_at": "2024-01-01T00:00:00Z"
     }
 ]
@@ -43,7 +43,7 @@ room_service = RoomService()
                             "id": 1,
                             "name": "커피숍",
                             "owner_id": 1,
-                            "is_private": false,
+                            "is_private": False,
                             "created_at": "2024-01-01T00:00:00Z"
                         }
                     ]
@@ -76,7 +76,7 @@ async def read_rooms(skip: int = 0, limit: int = 100, public_only: bool = True):
     "id": 1,
     "name": "커피숍",
     "owner_id": 1,
-    "is_private": false,
+    "is_private": False,
     "created_at": "2024-01-01T00:00:00Z"
 }
 ```
@@ -94,7 +94,7 @@ async def read_rooms(skip: int = 0, limit: int = 100, public_only: bool = True):
                         "id": 1,
                         "name": "커피숍",
                         "owner_id": 1,
-                        "is_private": false,
+                        "is_private": False,
                         "created_at": "2024-01-01T00:00:00Z"
                     }
                 }
@@ -134,7 +134,7 @@ async def create_new_room(
     "id": 1,
     "name": "커피숍",
     "owner_id": 1,
-    "is_private": false,
+    "is_private": False,
     "created_at": "2024-01-01T00:00:00Z"
 }
 ```
@@ -148,7 +148,7 @@ async def create_new_room(
                         "id": 1,
                         "name": "커피숍",
                         "owner_id": 1,
-                        "is_private": false,
+                        "is_private": False,
                         "created_at": "2024-01-01T00:00:00Z"
                     }
                 }

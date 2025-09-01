@@ -6,6 +6,7 @@ from .chat import router as chat_router
 from .tools import router as tools_router
 from .room_users import router as room_users_router
 from .websocket import router as websocket_router
+from .inventory import router as inventory_router
 
 __all__ = [
     "auth_router",
@@ -15,5 +16,6 @@ __all__ = [
     "chat_router",
     "tools_router",
     "room_users_router",
-    "websocket_router"
+    "websocket_router",
+    "inventory_router"
 ]

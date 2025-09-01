@@ -6,7 +6,7 @@ from app.database import engine
 from app.models import Base
 from app.routers import (
     auth_router, users_router, rooms_router, objects_router,
-    chat_router, tools_router, room_users_router, websocket_router
+    chat_router, tools_router, room_users_router, websocket_router, inventory_router
 )
 
 # Create database tables
@@ -251,6 +251,7 @@ app.include_router(chat_router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(tools_router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(room_users_router, prefix="/api/v1/room-users", tags=["room-users"])
 app.include_router(websocket_router, prefix="/api/v1", tags=["websocket"])
+app.include_router(inventory_router, prefix="/api/v1/inventory", tags=["inventory"])
 
 def custom_openapi():
     if app.openapi_schema:

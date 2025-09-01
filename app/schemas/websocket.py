@@ -1,9 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+from enum import Enum
 from datetime import datetime
 from app.models import ObjectType, ActionType
 
-class WebSocketEvent(BaseModel):
+class WebSocketEvent(str, Enum):
     """WebSocket event types"""
     JOIN_ROOM = "join_room"
     LEAVE_ROOM = "leave_room"

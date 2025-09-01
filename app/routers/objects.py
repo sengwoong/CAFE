@@ -3,11 +3,13 @@ from typing import List
 from app.models import User, ObjectType
 from app.schemas import Object, ObjectCreate, ObjectUpdate
 from app.services.object_service import ObjectService
+from app.services.inventory_service import InventoryService
 from app.auth import get_current_active_user
 
 router = APIRouter()
 
 object_service = ObjectService()
+inventory_service = InventoryService()
 
 @router.get("/", 
     response_model=List[Object],
@@ -169,8 +171,18 @@ async def create_object(
     object: ObjectCreate,
     current_user: User = Depends(get_current_active_user)
 ):
-    """Create a new object"""
-    return await object_service.create_object(object)
+    """Create a new object: 리팩터링 - 바로 방에 생성하지 않고 사용자 인벤토리에 저장"""
+    # 인벤토리에 추가
+    item = await inventory_service.add_item(
+        user_id=current_user.id,
+        obj_type=object.type,
+        quantity=1,
+        metadata=object.metadata,
+    )
+    return {
+        "status": "queued_in_inventory",
+        "inventory_item_id": item.id,
+    }
 
 @router.get("/{object_id}", 
     response_model=Object,

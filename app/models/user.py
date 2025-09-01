@@ -16,3 +16,4 @@ class User(Base):
     room_users = relationship("RoomUser", back_populates="user")
     chat_logs = relationship("ChatLog", back_populates="user")
     tools_logs = relationship("ToolsLog", back_populates="user")
+    inventory_items = relationship("InventoryItem", back_populates="user")

@@ -8,6 +8,7 @@ A FastAPI-based backend for managing virtual spaces, rooms, objects, and user in
 - **User Management**: Register, login, and manage user profiles
 - **Room Management**: Create, join, and manage virtual rooms
 - **Object System**: Add and manage objects (chairs, walls, tools) in rooms
+  - 이제 오브젝트 생성은 사용자의 인벤토리에 먼저 저장되고, 드래그&드롭으로 방 좌표(x,y)에 배치합니다.
 - **Real-time Position Tracking**: Live user position updates via WebSocket
 - **Live Chat System**: Real-time messaging in rooms
 - **Tool Usage Logging**: Real-time tool interaction logging
@@ -72,6 +73,7 @@ cafe/
 - `update_position` - Update user position
 - `send_message` - Send chat message
 - `use_tool` - Use a tool on an object
+ - `place_object` - Place an inventory item into a room
 
 ### Server to Client Events
 - `user_joined` - User joined the room
@@ -79,6 +81,7 @@ cafe/
 - `position_updated` - User position updated
 - `message_received` - New chat message
 - `tool_used` - Tool was used
+ - `object_placed` - Object placed in room
 - `error` - Error occurred
 
 ## 🛠️ Installation
@@ -171,6 +174,21 @@ ws.send(JSON.stringify({
 }));
 ```
 
+### Place Object (Drag & Drop)
+```javascript
+// inventory API로 먼저 아이템을 확보한 후, 드래그앤드롭 좌표에 배치
+ws.send(JSON.stringify({
+    event: "place_object",
+    data: {
+        inventory_item_id: 10,
+        room_id: 1,
+        x: 120,
+        y: 180,
+        rotation: 0.0
+    }
+}));
+```
+
 ## 📡 API Endpoints
 
 ### REST API
@@ -181,6 +199,7 @@ ws.send(JSON.stringify({
 - **Chat**: `/api/v1/chat/`
 - **Tools**: `/api/v1/tools/`
 - **Room Users**: `/api/v1/room-users/`
+ - **Inventory**: `/api/v1/inventory/`
 
 ### WebSocket
 - **WebSocket**: `/api/v1/ws?token=YOUR_TOKEN`
@@ -256,6 +275,27 @@ async def test_websocket():
 # Run the test
 asyncio.run(test_websocket())
 ```
+
+## 🕹️ Frontend (Vite + React + PixiJS)
+
+### Pages & Flow
+- 로그인/회원가입 → 방 목록(`/rooms`) → 방 생성/입장 → 게임(`/game`)
+- 게임: 배경 갈색, 플레이어(검정 원) WASD 이동, 인벤토리 배치/드래그-드롭 설치
+
+### WebSocket Events 사용
+- join_room, get_inventory, get_room_state, place_object
+- object_placed 수신 시 타입별 색상으로 타일 렌더:
+  - chair: 흰색, wall: 파란색, 기타: 노랑
+
+### Inventory/Shop
+- 샘플 추가 버튼으로 인벤토리에 chair 지급(데모)
+- 인벤토리에서 아이템 ‘배치’ 선택 후 캔버스 클릭으로 설치
+- 드래그-드롭: 버튼을 꾹 누른 상태로 캔버스로 이동 후 놓아도 설치됨
+
+### Controls
+- 이동: WASD
+- 방 입장: /rooms → 입장 버튼
+- 설치: 인벤토리 배치 선택 → 캔버스 클릭
 
 ## 🤝 Contributing
 

@@ -3,7 +3,7 @@ import asyncio
 from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException, status
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.database import get_session
 from app.models import User, Room, RoomUser, ChatLog, ToolsLog
 from app.schemas.websocket import (
     WebSocketMessage, WebSocketEvent, JoinRoomMessage, 
@@ -16,6 +16,7 @@ from app.services.user_service import UserService
 from app.services.room_service import RoomService
 from app.services.chat_service import ChatService
 from app.services.tools_service import ToolsService
+from app.services.inventory_service import InventoryService
 
 class ConnectionManager:
     def __init__(self):
@@ -60,17 +61,25 @@ class ConnectionManager:
             del self.connection_rooms[websocket]
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
+        try:
+            await websocket.send_text(message)
+        except Exception:
+            # 연결이 이미 끊겼거나 전송 실패 – 서버는 계속 유지, 연결만 정리
+            self.disconnect(websocket)
 
     async def broadcast_to_room(self, message: str, room_id: int, exclude_websocket: Optional[WebSocket] = None):
         if room_id in self.active_connections:
-            for connection in self.active_connections[room_id]:
-                if connection != exclude_websocket:
-                    try:
-                        await connection.send_text(message)
-                    except:
-                        # Remove broken connection
-                        self.disconnect(connection)
+            # 순회 중 set 수정 방지: 스냅샷 리스트로 순회 후 일괄 정리
+            broken: list[WebSocket] = []
+            for connection in list(self.active_connections[room_id]):
+                if connection == exclude_websocket:
+                    continue
+                try:
+                    await connection.send_text(message)
+                except Exception:
+                    broken.append(connection)
+            for connection in broken:
+                self.disconnect(connection)
 
     def get_connection_by_user_in_room(self, room_id: int, target_user_id: int) -> Optional[WebSocket]:
         if room_id not in self.active_connections:
@@ -88,6 +97,7 @@ class WebSocketService:
         self.room_service = RoomService()
         self.chat_service = ChatService()
         self.tools_service = ToolsService()
+        self.inventory_service = InventoryService()
 
     async def handle_websocket(self, websocket: WebSocket, token: str):
         """Handle WebSocket connection and messages"""
@@ -132,16 +142,22 @@ class WebSocketService:
                 headers={"WWW-Authenticate": "Bearer"},
             )
             token_data = verify_token(token, credentials_exception)
-            db = next(get_db())
-            user = db.query(User).filter(User.username == token_data.username).first()
-            return user
+            with get_session() as db:
+                user = db.query(User).filter(User.username == token_data.username).first()
+                return user
         except Exception:
             return None
 
     async def _process_message(self, websocket: WebSocket, user: User, message: dict):
         """Process incoming WebSocket message"""
-        event = message.get("event")
+        event_val = message.get("event")
         data = message.get("data", {})
+
+        # 문자열 이벤트를 Enum으로 안전 변환 (불일치 시 None)
+        try:
+            event = WebSocketEvent(event_val) if isinstance(event_val, str) else event_val
+        except Exception:
+            event = None
 
         if event == WebSocketEvent.JOIN_ROOM:
             await self._handle_join_room(websocket, user, data)
@@ -153,6 +169,12 @@ class WebSocketService:
             await self._handle_send_message(websocket, user, data)
         elif event == WebSocketEvent.USE_TOOL:
             await self._handle_use_tool(websocket, user, data)
+        elif event == "place_object":
+            await self._handle_place_object(websocket, user, data)
+        elif event == "get_inventory":
+            await self._handle_get_inventory(websocket, user)
+        elif event == "get_room_state":
+            await self._handle_get_room_state(websocket, user, data)
         elif event == WebSocketEvent.RTC_JOIN:
             await self._handle_rtc_join(websocket, user, data)
         elif event == WebSocketEvent.RTC_LEAVE:
@@ -181,6 +203,9 @@ class WebSocketService:
             # Join WebSocket room
             await self.manager.join_room(websocket, join_data.room_id)
             
+            # Send initial state to self
+            await self._send_initial_state(websocket, user, join_data.room_id)
+
             # Broadcast user joined to room
             user_data = UserPositionData(
                 user_id=user.id,
@@ -348,6 +373,106 @@ class WebSocketService:
                 data=ErrorData(error="Failed to use tool", details=str(e)).dict()
             )
             await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_place_object(self, websocket: WebSocket, user: User, data: dict):
+        """Handle placing an inventory item into the room by drag & drop"""
+        try:
+            from app.schemas.inventory import InventoryPlaceRequest
+            payload = InventoryPlaceRequest(**data)
+            created = await self.inventory_service.place_item_from_inventory(
+                user_id=user.id,
+                inventory_item_id=payload.inventory_item_id,
+                room_id=payload.room_id,
+                x=payload.x,
+                y=payload.y,
+                rotation=payload.rotation,
+            )
+
+            # Broadcast new object placed
+            message = WebSocketMessage(
+                event="object_placed",
+                data={
+                    "id": created.id,
+                    "room_id": created.room_id,
+                    "type": created.type.value if hasattr(created.type, 'value') else created.type,
+                    "x": created.x,
+                    "y": created.y,
+                    "rotation": created.rotation,
+                    "metadata": created.get_metadata(),
+                    "owner_user_id": user.id,
+                    "owner_username": user.username,
+                }
+            )
+            await self.manager.broadcast_to_room(message.json(), payload.room_id)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to place object", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_get_inventory(self, websocket: WebSocket, user: User):
+        try:
+            items = await self.inventory_service.list_items(user.id)
+            # Serialize minimal fields
+            payload = [
+                {
+                    "id": it.id,
+                    "type": it.type.value if hasattr(it.type, 'value') else it.type,
+                    "quantity": it.quantity,
+                }
+                for it in items
+            ]
+            msg = WebSocketMessage(event="inventory", data={"items": payload})
+            await self.manager.send_personal_message(msg.json(), websocket)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to get inventory", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _handle_get_room_state(self, websocket: WebSocket, user: User, data: dict):
+        try:
+            room_id = int(data.get("room_id"))
+            with get_session() as db:
+                # Pull current users
+                users = db.query(RoomUser).filter(RoomUser.room_id == room_id).all()
+                users_payload = [
+                {
+                    "user_id": ru.user_id,
+                    "x": ru.x,
+                    "y": ru.y,
+                    "username": db.query(User).filter(User.id == ru.user_id).first().username if db else None,
+                }
+                for ru in users
+            ]
+                # Pull objects
+                from app.models import Object
+                objects = db.query(Object).filter(Object.room_id == room_id).all()
+                objects_payload = [
+                {
+                    "id": o.id,
+                    "type": o.type.value if hasattr(o.type, 'value') else o.type,
+                    "x": o.x,
+                    "y": o.y,
+                    "rotation": o.rotation,
+                    "metadata": o.get_metadata(),
+                }
+                for o in objects
+            ]
+                msg = WebSocketMessage(event="room_state", data={"room_id": room_id, "users": users_payload, "objects": objects_payload})
+                await self.manager.send_personal_message(msg.json(), websocket)
+        except Exception as e:
+            error_message = WebSocketMessage(
+                event=WebSocketEvent.ERROR,
+                data=ErrorData(error="Failed to get room state", details=str(e)).dict()
+            )
+            await self.manager.send_personal_message(error_message.json(), websocket)
+
+    async def _send_initial_state(self, websocket: WebSocket, user: User, room_id: int):
+        await self._handle_get_inventory(websocket, user)
+        await self._handle_get_room_state(websocket, user, {"room_id": room_id})
 
     async def _handle_rtc_join(self, websocket: WebSocket, user: User, data: dict):
         try:
